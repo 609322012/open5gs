@@ -40,8 +40,6 @@ extern "C" {
 #define GRP_PER_MME                 256    /* According to spec it is 65535 */
 #define CODE_PER_MME                256    /* According to spec it is 256 */
 
-#define MAX_NUM_OF_SERVED_GUMMEI    8
-
 extern int __mme_log_domain;
 extern int __emm_log_domain;
 extern int __esm_log_domain;
@@ -68,7 +66,7 @@ typedef uint32_t mme_p_tmsi_t;
 
 typedef struct served_gummei_s {
     int             num_of_plmn_id;
-    ogs_plmn_id_t   plmn_id[OGS_MAX_NUM_OF_PLMN];
+    ogs_plmn_id_t   plmn_id[OGS_MAX_NUM_OF_PLMN_PER_MME];
 
     int             num_of_mme_gid;
     uint16_t        mme_gid[GRP_PER_MME];
@@ -101,8 +99,8 @@ typedef struct mme_context_s {
     ogs_list_t      csmap_list;     /* TAI-LAI Map List */
 
     /* Served GUMME */
-    int             max_num_of_served_gummei;
-    served_gummei_t served_gummei[MAX_NUM_OF_SERVED_GUMMEI];
+    int             num_of_served_gummei;
+    served_gummei_t served_gummei[OGS_MAX_NUM_OF_SERVED_GUMMEI];
 
     /* Served TAI */
     int             num_of_served_tai;
@@ -110,7 +108,7 @@ typedef struct mme_context_s {
         ogs_eps_tai0_list_t list0;
         ogs_eps_tai1_list_t list1;
         ogs_eps_tai2_list_t list2;
-    } served_tai[OGS_MAX_NUM_OF_SERVED_TAI];
+    } served_tai[OGS_MAX_NUM_OF_SUPPORTED_TA];
 
     /* Access Control */
     int             default_reject_cause;
@@ -118,7 +116,7 @@ typedef struct mme_context_s {
     struct {
         int reject_cause;
         ogs_plmn_id_t plmn_id;
-    } access_control[OGS_MAX_NUM_OF_ACCESS_CONTROL];
+    } access_control[OGS_MAX_NUM_OF_PLMN_PER_MME];
 
     /* defined in 'nas_ies.h'
      * #define NAS_SECURITY_ALGORITHMS_EIA0        0
@@ -288,7 +286,7 @@ typedef struct mme_enb_s {
     uint16_t        ostream_id;         /* enb_ostream_id generator */
 
     int             num_of_supported_ta_list;
-    ogs_eps_tai_t   supported_ta_list[OGS_MAX_NUM_OF_TAI*OGS_MAX_NUM_OF_BPLMN];
+    ogs_eps_tai_t   supported_ta_list[OGS_MAX_NUM_OF_SUPPORTED_TA];
 
     ogs_pkbuf_t     *s1_reset_ack; /* Reset message */
 
@@ -533,11 +531,50 @@ struct mme_ue_s {
      (((__mME)->enb_ue == NULL) || (enb_ue_cycle((__mME)->enb_ue) == NULL)))
     enb_ue_t        *enb_ue;    /* S1 UE context */
 
+#define HOLDING_S1_CONTEXT(__mME) \
+    do { \
+        enb_ue_deassociate((__mME)->enb_ue); \
+        \
+        (__mME)->enb_ue_holding = enb_ue_cycle((__mME)->enb_ue); \
+        if ((__mME)->enb_ue_holding) { \
+            ogs_warn("[%s] Holding S1 Context", (__mME)->imsi_bcd); \
+            ogs_warn("[%s]    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]", \
+                    (__mME)->imsi_bcd, (__mME)->enb_ue_holding->enb_ue_s1ap_id, \
+                    (__mME)->enb_ue_holding->mme_ue_s1ap_id); \
+            \
+            (__mME)->enb_ue_holding->ue_ctx_rel_action = \
+                S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE; \
+            ogs_timer_start((__mME)->enb_ue_holding->t_s1_holding, \
+                    mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration); \
+        } else \
+            ogs_error("[%s] S1 Context has already been removed", \
+                    (__mME)->imsi_bcd); \
+    } while(0)
+#define CLEAR_S1_CONTEXT(__mME) \
+    do { \
+        if (enb_ue_cycle((__mME)->enb_ue_holding)) { \
+            int r; \
+            ogs_warn("[%s] Clear S1 Context", (__mME)->imsi_bcd); \
+            ogs_warn("[%s]    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]", \
+                    (__mME)->imsi_bcd, (__mME)->enb_ue_holding->enb_ue_s1ap_id, \
+                    (__mME)->enb_ue_holding->mme_ue_s1ap_id); \
+            \
+            r = s1ap_send_ue_context_release_command( \
+                    (__mME)->enb_ue_holding, \
+                    S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release, \
+                    S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0); \
+            ogs_expect(r == OGS_OK); \
+            ogs_assert(r != OGS_ERROR); \
+        } \
+        (__mME)->enb_ue_holding = NULL; \
+    } while(0)
+    enb_ue_t        *enb_ue_holding;
+
     struct {
 #define MME_CLEAR_PAGING_INFO(__mME) \
     do { \
         ogs_assert(__mME); \
-        ogs_debug("[%s] Clear Paging Info", mme_ue->imsi_bcd); \
+        ogs_debug("[%s] Clear Paging Info", (__mME)->imsi_bcd); \
         (__mME)->paging.type = 0; \
     } while(0)
 

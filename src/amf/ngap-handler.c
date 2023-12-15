@@ -66,7 +66,7 @@ static bool served_tai_is_found(amf_gnb_t *gnb)
             tai.tac.v = gnb->supported_ta_list[i].tac.v;
             served_tai_index = amf_find_served_tai(&tai);
             if (served_tai_index >= 0 &&
-                    served_tai_index < OGS_MAX_NUM_OF_SERVED_TAI) {
+                    served_tai_index < OGS_MAX_NUM_OF_SUPPORTED_TA) {
                 ogs_debug("    TAC[%d]", gnb->supported_ta_list[i].tac.v);
                 ogs_debug("    PLMN_ID[MCC:%d MNC:%d]",
                     ogs_plmn_id_mcc(&gnb->supported_ta_list[i].
@@ -205,8 +205,8 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
     /* Parse Supported TA */
     for (i = 0, gnb->num_of_supported_ta_list = 0;
             i < SupportedTAList->list.count &&
-            gnb->num_of_supported_ta_list < OGS_MAX_NUM_OF_TAI;
-                i++) {
+            gnb->num_of_supported_ta_list < OGS_MAX_NUM_OF_SUPPORTED_TA;
+            i++) {
         NGAP_SupportedTAItem_t *SupportedTAItem = NULL;
 
         SupportedTAItem = (NGAP_SupportedTAItem_t *)
@@ -263,7 +263,7 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
                             bplmn_list[j].num_of_s_nssai = 0;
                     k < BroadcastPLMNItem->tAISliceSupportList.list.count &&
                     gnb->supported_ta_list[i].bplmn_list[j].num_of_s_nssai <
-                        OGS_MAX_NUM_OF_SLICE;
+                        OGS_MAX_NUM_OF_SLICE_SUPPORT;
                             k++) {
                 NGAP_SliceSupportItem_t *SliceSupportItem = NULL;
                 NGAP_S_NSSAI_t *s_NSSAI = NULL;
@@ -486,24 +486,24 @@ void ngap_handle_initial_ue_message(amf_gnb_t *gnb, ogs_ngap_message_t *message)
                 /* If NAS(amf_ue_t) has already been associated with
                  * older NG(ran_ue_t) context */
                 if (CM_CONNECTED(amf_ue)) {
-                    /* Previous NG(ran_ue_t) context the holding timer(30secs)
-                     * is started.
-                     * Newly associated NG(ran_ue_t) context holding timer
-                     * is stopped. */
-                    ogs_debug("[%s] Start NG Holding Timer", amf_ue->suci);
-                    ogs_debug("[%s]    RAN_UE_NGAP_ID[%d] AMF_UE_NGAP_ID[%lld]",
-                            amf_ue->suci, amf_ue->ran_ue->ran_ue_ngap_id,
-                            (long long)amf_ue->ran_ue->amf_ue_ngap_id);
-
-                    /* De-associate NG with NAS/EMM */
-                    ran_ue_deassociate(amf_ue->ran_ue);
-
-                    r = ngap_send_ran_ue_context_release_command(
-                            amf_ue->ran_ue,
-                            NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
-                            NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
+    /*
+     * Issue #2786
+     *
+     * In cases where the UE sends an Integrity Un-Protected Registration
+     * Request or Service Request, there is an issue of sending
+     * a UEContextReleaseCommand for the OLD RAN Context.
+     *
+     * For example, if the UE switchs off and power-on after
+     * the first connection, the 5G Core sends a UEContextReleaseCommand.
+     *
+     * However, since there is no RAN context for this on the gNB,
+     * the gNB does not send a UEContextReleaseComplete,
+     * so the deletion of the RAN Context does not function properly.
+     *
+     * To solve this problem, the 5G Core has been modified to implicitly
+     * delete the RAN Context instead of sending a UEContextReleaseCommand.
+     */
+                    HOLDING_NG_CONTEXT(amf_ue);
                 }
                 amf_ue_associate_ran_ue(amf_ue, ran_ue);
 
@@ -933,6 +933,8 @@ void ngap_handle_initial_context_setup_response(
 
     ogs_debug("    RAN_UE_NGAP_ID[%d] AMF_UE_NGAP_ID[%lld]",
             ran_ue->ran_ue_ngap_id, (long long)ran_ue->amf_ue_ngap_id);
+
+    ran_ue->initial_context_setup_response_received = true;
 
     amf_ue = ran_ue->amf_ue;
     if (!amf_ue) {
@@ -3228,6 +3230,8 @@ void ngap_handle_handover_required(
     target_ue->ue_context_requested = source_ue->ue_context_requested;
     target_ue->initial_context_setup_request_sent =
             source_ue->initial_context_setup_request_sent;
+    target_ue->initial_context_setup_response_received =
+            source_ue->initial_context_setup_response_received;
 
     target_ue->psimask.activated = source_ue->psimask.activated;
 
@@ -4252,7 +4256,7 @@ void ngap_handle_ran_configuration_update(
                                 bplmn_list[j].num_of_s_nssai = 0;
                         k < BroadcastPLMNItem->tAISliceSupportList.list.count &&
                         gnb->supported_ta_list[i].bplmn_list[j].num_of_s_nssai <
-                            OGS_MAX_NUM_OF_SLICE;
+                            OGS_MAX_NUM_OF_SLICE_SUPPORT;
                                 k++) {
                     NGAP_SliceSupportItem_t *SliceSupportItem = NULL;
                     NGAP_S_NSSAI_t *s_NSSAI = NULL;

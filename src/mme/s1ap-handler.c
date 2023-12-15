@@ -69,7 +69,7 @@ static bool served_tai_is_found(mme_enb_t *enb)
     for (i = 0; i < enb->num_of_supported_ta_list; i++) {
         served_tai_index = mme_find_served_tai(&enb->supported_ta_list[i]);
         if (served_tai_index >= 0 &&
-                served_tai_index < OGS_MAX_NUM_OF_SERVED_TAI) {
+                served_tai_index < OGS_MAX_NUM_OF_SUPPORTED_TA) {
             ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);
             return true;
         }
@@ -159,8 +159,10 @@ void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
         ogs_debug("    PagingDRX[%ld]", *PagingDRX);
 
     /* Parse Supported TA */
-    enb->num_of_supported_ta_list = 0;
-    for (i = 0; i < SupportedTAs->list.count; i++) {
+    for (i = 0, enb->num_of_supported_ta_list = 0;
+            i < SupportedTAs->list.count &&
+            enb->num_of_supported_ta_list < OGS_MAX_NUM_OF_SUPPORTED_TA;
+            i++) {
         S1AP_SupportedTAs_Item_t *SupportedTAs_Item = NULL;
         S1AP_TAC_t *tAC = NULL;
 
@@ -289,8 +291,10 @@ void s1ap_handle_enb_configuration_update(
         S1AP_Cause_PR group = S1AP_Cause_PR_NOTHING;
         long cause = 0;
 
-        enb->num_of_supported_ta_list = 0;
-        for (i = 0; i < SupportedTAs->list.count; i++) {
+        for (i = 0, enb->num_of_supported_ta_list = 0;
+                i < SupportedTAs->list.count &&
+                enb->num_of_supported_ta_list < OGS_MAX_NUM_OF_SUPPORTED_TA;
+                i++) {
             S1AP_SupportedTAs_Item_t *SupportedTAs_Item = NULL;
             S1AP_TAC_t *tAC = NULL;
 
@@ -492,23 +496,24 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 /* If NAS(mme_ue_t) has already been associated with
                  * older S1(enb_ue_t) context */
                 if (ECM_CONNECTED(mme_ue)) {
-                    /* Previous S1(enb_ue_t) context the holding timer(30secs)
-                     * is started.
-                     * Newly associated S1(enb_ue_t) context holding timer
-                     * is stopped. */
-                    ogs_debug("Start S1 Holding Timer");
-                    ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
-                            mme_ue->enb_ue->enb_ue_s1ap_id,
-                            mme_ue->enb_ue->mme_ue_s1ap_id);
-
-                    /* De-associate S1 with NAS/EMM */
-                    enb_ue_deassociate(mme_ue->enb_ue);
-
-                    r = s1ap_send_ue_context_release_command(mme_ue->enb_ue,
-                            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
-                            S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
+    /*
+     * Issue #2786
+     *
+     * In cases where the UE sends an Integrity Un-Protected Attach
+     * Request or Service Request, there is an issue of sending
+     * a UEContextReleaseCommand for the OLD ENB Context.
+     *
+     * For example, if the UE switchs off and power-on after
+     * the first connection, the EPC sends a UEContextReleaseCommand.
+     *
+     * However, since there is no ENB context for this on the eNB,
+     * the eNB does not send a UEContextReleaseComplete,
+     * so the deletion of the ENB Context does not function properly.
+     *
+     * To solve this problem, the EPC has been modified to implicitly
+     * delete the ENB Context instead of sending a UEContextReleaseCommand.
+     */
+                    HOLDING_S1_CONTEXT(mme_ue);
                 }
                 enb_ue_associate_mme_ue(enb_ue, mme_ue);
                 ogs_debug("Mobile Reachable timer stopped for IMSI[%s]",
